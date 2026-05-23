@@ -16,23 +16,26 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ── 2. Setup Miniconda (versi terbaru) ───────────────────────────────────
-      - name: Set up Miniconda
-        uses: conda-incubator/setup-miniconda@v3
+      # ── 2. Setup Python langsung (tanpa conda) ───────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          miniconda-version: "latest"
-          activate-environment: heart-disease-env
-          environment-file: MLProject/conda.yaml
-          auto-activate-base: false
-          conda-remove-defaults: true
+          python-version: '3.12.7'
 
-      # ── 3. Install MLflow di conda env ───────────────────────────────────────
-      - name: Install MLflow
-        shell: bash -el {0}
+      # ── 3. Install semua dependencies via pip ────────────────────────────────
+      - name: Install Dependencies
         run: |
-          conda activate heart-disease-env
-          pip install mlflow==2.19.0
-          mlflow --version
+          python -m pip install --upgrade pip
+          pip install mlflow==2.19.0 \
+                      pandas==2.2.2 \
+                      numpy==1.26.4 \
+                      scikit-learn==1.5.1 \
+                      matplotlib==3.9.0 \
+                      seaborn==0.13.2 \
+                      dagshub==0.3.25
+          echo "=== Versi library ==="
+          python -c "import mlflow; print('mlflow:', mlflow.__version__)"
+          python -c "import sklearn; print('sklearn:', sklearn.__version__)"
 
       # ── 4. Cek dataset tersedia ───────────────────────────────────────────────
       - name: Check dataset
@@ -40,26 +43,28 @@ jobs:
           echo "=== Isi folder MLProject ==="
           ls -lh MLProject/
           echo "=== Isi folder dataset ==="
-          ls -lh MLProject/heart_preprocessing/ || echo "Folder dataset tidak ditemukan!"
+          ls -lh MLProject/heart_preprocessing/
 
-      # ── 5. Run MLflow Project ────────────────────────────────────────────────
+      # ── 5. Run MLflow Project (env-manager local) ────────────────────────────
       - name: Run MLflow Project
-        shell: bash -el {0}
         env:
           MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+          MLFLOW_DISABLE_ENV_MANAGER_CONDA_WARNING: "TRUE"
         run: |
-          conda activate heart-disease-env
           cd MLProject
           mlflow run . \
             --experiment-name "Heart-Disease-CI" \
-            --env-manager conda \
+            --env-manager local \
             -P n_estimators=100 \
             -P max_depth=10 \
             -P min_samples_split=2
+          echo "MLflow run selesai!"
+          echo "=== Isi mlruns ==="
+          ls -lh mlruns/0/ 2>/dev/null || echo "Folder mlruns tidak ditemukan"
 
-      # ── 6. Upload artifacts ke GitHub ────────────────────────────────────────
+      # ── 6. Upload artifacts ke GitHub Actions ────────────────────────────────
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -74,34 +79,34 @@ jobs:
         run: |
           git config --global user.name  "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add MLProject/artifacts/ MLProject/mlruns/ 2>/dev/null || true
+          git add MLProject/mlruns/ MLProject/artifacts/ 2>/dev/null || true
           git diff --staged --quiet || \
-            git commit -m "ci: model artifacts - run #${{ github.run_number }}"
+            git commit -m "ci: update model artifacts - run #${{ github.run_number }}"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 8. Build & Push Docker Image ─────────────────────────────────────────
+      # ── 8. Login Docker Hub ───────────────────────────────────────────────────
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker Image via MLflow
-        shell: bash -el {0}
+      # ── 9. Build & Push Docker Image ─────────────────────────────────────────
+      - name: Build and Push Docker Image
         run: |
-          conda activate heart-disease-env
-          
-          # Cari run_id terbaru
-          RUN_ID=$(ls MLProject/mlruns/0/ 2>/dev/null | grep -v meta | tail -1)
-          echo "Run ID: $RUN_ID"
-          
+          RUN_ID=$(ls MLProject/mlruns/0/ | grep -v 'meta' | grep -v 'tags' | tail -1)
+          echo "Run ID ditemukan: $RUN_ID"
+
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:latest"
-          
+          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:run${{ github.run_number }}"
+
           mlflow models build-docker \
             --model-uri "MLProject/mlruns/0/${RUN_ID}/artifacts/model" \
             --name "$IMAGE"
-          
+
+          docker tag "$IMAGE" "$IMAGE_TAG"
           docker push "$IMAGE"
+          docker push "$IMAGE_TAG"
           echo "Docker image pushed: $IMAGE"
