@@ -16,13 +16,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ── 2. Setup Python langsung (tanpa conda) ───────────────────────────────
+      # ── 2. Setup Python ──────────────────────────────────────────────────────
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12.7'
 
-      # ── 3. Install semua dependencies via pip ────────────────────────────────
+      # ── 3. Install Dependencies ──────────────────────────────────────────────
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
@@ -31,13 +31,11 @@ jobs:
                       numpy==1.26.4 \
                       scikit-learn==1.5.1 \
                       matplotlib==3.9.0 \
-                      seaborn==0.13.2 \
-                      dagshub==0.3.25
-          echo "=== Versi library ==="
+                      seaborn==0.13.2
           python -c "import mlflow; print('mlflow:', mlflow.__version__)"
           python -c "import sklearn; print('sklearn:', sklearn.__version__)"
 
-      # ── 4. Cek dataset tersedia ───────────────────────────────────────────────
+      # ── 4. Cek dataset ───────────────────────────────────────────────────────
       - name: Check dataset
         run: |
           echo "=== Isi folder MLProject ==="
@@ -45,27 +43,32 @@ jobs:
           echo "=== Isi folder dataset ==="
           ls -lh MLProject/heart_preprocessing/
 
-      # ── 5. Run MLflow Project (env-manager local) ────────────────────────────
-      - name: Run MLflow Project
-        env:
-          MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}
-          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
-          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
-          MLFLOW_DISABLE_ENV_MANAGER_CONDA_WARNING: "TRUE"
+      # ── 5. Run modelling.py langsung (tanpa mlflow run) ──────────────────────
+      #       Lebih stabil karena tidak bergantung MLProject resolver
+      - name: Train Model
         run: |
           cd MLProject
-          mlflow run . \
-            --experiment-name "Heart-Disease-CI" \
-            --env-manager local \
-            -P n_estimators=100 \
-            -P max_depth=10 \
-            -P min_samples_split=2
-          echo "MLflow run selesai!"
-          echo "=== Isi mlruns ==="
-          ls -lh mlruns/0/ 2>/dev/null || echo "Folder mlruns tidak ditemukan"
+          
+          # Set local tracking URI (tidak pakai DagsHub agar tidak error koneksi)
+          export MLFLOW_TRACKING_URI="mlruns"
+          export MLFLOW_DISABLE_ENV_MANAGER_CONDA_WARNING="TRUE"
+          
+          python modelling.py \
+            --data_path heart_preprocessing/heart_preprocessing.csv \
+            --n_estimators 100 \
+            --max_depth 10 \
+            --min_samples_split 2 \
+            --max_features sqrt \
+            --test_size 0.2 \
+            --random_state 42
 
-      # ── 6. Upload artifacts ke GitHub Actions ────────────────────────────────
-      - name: Upload Artifacts
+          echo "=== Training selesai! ==="
+          echo "=== Isi mlruns ==="
+          ls -lh mlruns/ 2>/dev/null || echo "mlruns tidak ditemukan"
+          ls -lh mlruns/0/ 2>/dev/null || true
+
+      # ── 6. Upload mlruns & artifacts ke GitHub Actions ───────────────────────
+      - name: Upload Artifacts to GitHub
         uses: actions/upload-artifact@v4
         with:
           name: mlruns-run-${{ github.run_number }}
@@ -74,14 +77,21 @@ jobs:
             MLProject/artifacts/
           retention-days: 30
 
-      # ── 7. Commit artifacts ke repo ──────────────────────────────────────────
-      - name: Commit Artifacts to Repo
+      # ── 7. Commit artifacts ke repository ────────────────────────────────────
+      - name: Save Artifacts to Repository
         run: |
           git config --global user.name  "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add MLProject/mlruns/ MLProject/artifacts/ 2>/dev/null || true
+          
+          # Buat .gitignore untuk mlruns yang besar
+          echo "*.pyc" >> .gitignore
+          
+          # Tambah artifacts saja (lebih kecil dari mlruns)
+          git add MLProject/artifacts/ 2>/dev/null || true
+          git add .gitignore 2>/dev/null || true
+          
           git diff --staged --quiet || \
-            git commit -m "ci: update model artifacts - run #${{ github.run_number }}"
+            git commit -m "ci: update model artifacts - run #${{ github.run_number }} [skip ci]"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,8 +106,10 @@ jobs:
       # ── 9. Build & Push Docker Image ─────────────────────────────────────────
       - name: Build and Push Docker Image
         run: |
-          RUN_ID=$(ls MLProject/mlruns/0/ | grep -v 'meta' | grep -v 'tags' | tail -1)
-          echo "Run ID ditemukan: $RUN_ID"
+          # Cari run ID terbaru dari mlruns
+          RUN_ID=$(find MLProject/mlruns/0 -mindepth 1 -maxdepth 1 \
+                   -type d ! -name 'meta' | sort | tail -1 | xargs basename)
+          echo "Run ID: $RUN_ID"
 
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:latest"
           IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:run${{ github.run_number }}"
@@ -109,4 +121,4 @@ jobs:
           docker tag "$IMAGE" "$IMAGE_TAG"
           docker push "$IMAGE"
           docker push "$IMAGE_TAG"
-          echo "Docker image pushed: $IMAGE"
+          echo "✅ Docker image pushed: $IMAGE"
