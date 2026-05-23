@@ -1,79 +1,90 @@
-name: MLflow CI – Heart Disease
+﻿name: MLflow CI - Heart Disease
 
 on:
   push:
     branches: [main]
     paths:
-      - 'MLProject/**'
+      - "MLProject/**"
   workflow_dispatch:
 
 jobs:
   train-and-deploy:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      # ── 2. Python Setup ──────────────────────────────────────────────────────
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12.7'
+          python-version: "3.12.7"
 
-      # ── 3. Install Dependencies ──────────────────────────────────────────────
-      - name: Install MLflow & Dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install mlflow==2.19.0 pandas numpy scikit-learn \
-                      matplotlib seaborn dagshub
+          pip install mlflow==2.19.0 pandas==2.2.2 numpy==1.26.4 scikit-learn==1.5.1 matplotlib==3.9.0 seaborn==0.13.2
+          python -c "import mlflow; print('mlflow:', mlflow.__version__)"
 
-      # ── 4. Set up Conda (required for mlflow run) ────────────────────────────
-      - name: Set up Conda
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          auto-activate-base: true
-          python-version: '3.12.7'
-
-      # ── 5. Run MLflow Project ────────────────────────────────────────────────
-      - name: Run MLflow Project
-        env:
-          MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}
-          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
-          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+      - name: Check dataset
         run: |
-          mlflow run MLProject/ \
-            --experiment-name "Heart-Disease-CI" \
-            -P n_estimators=100 \
-            -P max_depth=10 \
-            -P min_samples_split=2
+          echo "=== Isi MLProject ==="
+          ls -lh MLProject/
+          echo "=== Isi dataset ==="
+          ls -lh MLProject/heart_preprocessing/
 
-      # ── 6. Upload MLruns as Artifact ─────────────────────────────────────────
-      - name: Upload MLruns to GitHub Artifacts
+      - name: Train Model
+        run: |
+          cd MLProject
+          export MLFLOW_TRACKING_URI="mlruns"
+          export MLFLOW_DISABLE_ENV_MANAGER_CONDA_WARNING="TRUE"
+          python modelling.py \
+            --data_path heart_preprocessing/heart_preprocessing.csv \
+            --n_estimators 100 \
+            --max_depth 10 \
+            --min_samples_split 2 \
+            --max_features sqrt \
+            --test_size 0.2 \
+            --random_state 42
+          echo "=== Struktur mlruns ==="
+          find mlruns -type d | head -20
+
+      - name: Find Model Path
+        run: |
+          cd MLProject
+          MODEL_PATH=$(find mlruns -type d -name "model" | head -1)
+          echo "Model path: $MODEL_PATH"
+          if [ -z "$MODEL_PATH" ]; then
+            echo "ERROR: model tidak ditemukan!"
+            find mlruns -type f | head -20
+            exit 1
+          fi
+          echo "$MODEL_PATH" > ../model_path.txt
+
+      - name: Upload Artifacts to GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: mlruns-${{ github.run_number }}
+          name: mlruns-run-${{ github.run_number }}
           path: |
-            mlruns/
+            MLProject/mlruns/
             MLProject/artifacts/
           retention-days: 30
 
-      # ── 7. Commit Artifacts to Repository (GitHub LFS friendly) ─────────────
-      - name: Commit MLruns to Repository
+      - name: Save Artifacts to Repository
         run: |
-          git config --global user.name  "github-actions[bot]"
+          git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add MLProject/artifacts/ || true
-          git diff --staged --quiet || \
-            git commit -m "ci: update model artifacts - run #${{ github.run_number }}"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── 8. Build Docker Image (mlflow build-docker) ──────────────────────────
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git add MLProject/artifacts/ 2>/dev/null || true
+          git add MLProject/mlruns/ 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "ci: artifacts run #${{ github.run_number }} [skip ci]"
+          git push origin main
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -81,22 +92,14 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build & Push Docker Image via MLflow
-        env:
-          MODEL_URI: "models:/HeartDiseaseCI/latest"
+      - name: Build and Push Docker Image
         run: |
-          IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:${{ github.run_number }}"
-          IMAGE_LATEST="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:latest"
-          
-          # Build docker image using mlflow
-          mlflow models build-docker \
-            --model-uri "runs:/$(ls mlruns/0/ | tail -1)/model" \
-            --name "$IMAGE_NAME" \
-            --enable-mlserver
-          
-          # Tag and push
-          docker tag "$IMAGE_NAME" "$IMAGE_LATEST"
-          docker push "$IMAGE_NAME"
-          docker push "$IMAGE_LATEST"
-          
-          echo "✅ Docker image pushed: $IMAGE_NAME"
+          MODEL_PATH=$(cat model_path.txt)
+          echo "Model path: $MODEL_PATH"
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:latest"
+          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:run${{ github.run_number }}"
+          mlflow models build-docker --model-uri "$MODEL_PATH" --name "$IMAGE"
+          docker tag "$IMAGE" "$IMAGE_TAG"
+          docker push "$IMAGE"
+          docker push "$IMAGE_TAG"
+          echo "Docker pushed: $IMAGE"
