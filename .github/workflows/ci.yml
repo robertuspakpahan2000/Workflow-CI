@@ -11,10 +11,16 @@ jobs:
   train-and-deploy:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write      # ← izin write ke repo
+
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       # ── 2. Setup Python ──────────────────────────────────────────────────────
       - name: Set up Python 3.12
@@ -33,26 +39,22 @@ jobs:
                       matplotlib==3.9.0 \
                       seaborn==0.13.2
           python -c "import mlflow; print('mlflow:', mlflow.__version__)"
-          python -c "import sklearn; print('sklearn:', sklearn.__version__)"
 
       # ── 4. Cek dataset ───────────────────────────────────────────────────────
       - name: Check dataset
         run: |
-          echo "=== Isi folder MLProject ==="
+          echo "=== Isi MLProject ==="
           ls -lh MLProject/
-          echo "=== Isi folder dataset ==="
+          echo "=== Isi dataset ==="
           ls -lh MLProject/heart_preprocessing/
 
-      # ── 5. Run modelling.py langsung (tanpa mlflow run) ──────────────────────
-      #       Lebih stabil karena tidak bergantung MLProject resolver
+      # ── 5. Train Model ───────────────────────────────────────────────────────
       - name: Train Model
         run: |
           cd MLProject
-          
-          # Set local tracking URI (tidak pakai DagsHub agar tidak error koneksi)
           export MLFLOW_TRACKING_URI="mlruns"
           export MLFLOW_DISABLE_ENV_MANAGER_CONDA_WARNING="TRUE"
-          
+
           python modelling.py \
             --data_path heart_preprocessing/heart_preprocessing.csv \
             --n_estimators 100 \
@@ -62,12 +64,10 @@ jobs:
             --test_size 0.2 \
             --random_state 42
 
-          echo "=== Training selesai! ==="
-          echo "=== Isi mlruns ==="
-          ls -lh mlruns/ 2>/dev/null || echo "mlruns tidak ditemukan"
-          ls -lh mlruns/0/ 2>/dev/null || true
+          echo "=== Training selesai ==="
+          ls -lh mlruns/0/ 2>/dev/null || echo "mlruns tidak ditemukan"
 
-      # ── 6. Upload mlruns & artifacts ke GitHub Actions ───────────────────────
+      # ── 6. Upload ke GitHub Actions Artifacts ────────────────────────────────
       - name: Upload Artifacts to GitHub
         uses: actions/upload-artifact@v4
         with:
@@ -77,24 +77,23 @@ jobs:
             MLProject/artifacts/
           retention-days: 30
 
-      # ── 7. Commit artifacts ke repository ────────────────────────────────────
+      # ── 7. Commit & Push artifacts ke repo ───────────────────────────────────
       - name: Save Artifacts to Repository
         run: |
           git config --global user.name  "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Buat .gitignore untuk mlruns yang besar
-          echo "*.pyc" >> .gitignore
-          
-          # Tambah artifacts saja (lebih kecil dari mlruns)
+
+          # Set remote URL dengan token agar bisa push
+          git remote set-url origin \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+          # Tambah artifacts
           git add MLProject/artifacts/ 2>/dev/null || true
-          git add .gitignore 2>/dev/null || true
-          
+          git add MLProject/mlruns/ 2>/dev/null || true
+
           git diff --staged --quiet || \
-            git commit -m "ci: update model artifacts - run #${{ github.run_number }} [skip ci]"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            git commit -m "ci: model artifacts run #${{ github.run_number }} [skip ci]"
+          git push origin main
 
       # ── 8. Login Docker Hub ───────────────────────────────────────────────────
       - name: Login to Docker Hub
@@ -106,9 +105,8 @@ jobs:
       # ── 9. Build & Push Docker Image ─────────────────────────────────────────
       - name: Build and Push Docker Image
         run: |
-          # Cari run ID terbaru dari mlruns
           RUN_ID=$(find MLProject/mlruns/0 -mindepth 1 -maxdepth 1 \
-                   -type d ! -name 'meta' | sort | tail -1 | xargs basename)
+                   -type d | sort | tail -1 | xargs basename)
           echo "Run ID: $RUN_ID"
 
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:latest"
@@ -121,4 +119,4 @@ jobs:
           docker tag "$IMAGE" "$IMAGE_TAG"
           docker push "$IMAGE"
           docker push "$IMAGE_TAG"
-          echo "✅ Docker image pushed: $IMAGE"
+          echo "Docker image pushed: $IMAGE"
