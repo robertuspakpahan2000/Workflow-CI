@@ -1,0 +1,15 @@
+artifact_uri: /home/runner/work/Workflow-CI/Workflow-CI/MLProject/mlruns/380928892620117848/f9622ba76b4649f385d0587695513155/artifacts
+end_time: 1779666687171
+entry_point_name: ''
+experiment_id: '380928892620117848'
+lifecycle_stage: active
+run_id: f9622ba76b4649f385d0587695513155
+run_name: nimble-mole-725
+run_uuid: f9622ba76b4649f385d0587695513155
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1779666683541
+status: 3
+tags: []
+user_id: runner

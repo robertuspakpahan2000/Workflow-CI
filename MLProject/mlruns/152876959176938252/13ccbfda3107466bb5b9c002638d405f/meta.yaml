@@ -1,0 +1,15 @@
+artifact_uri: /home/runner/work/Workflow-CI/Workflow-CI/MLProject/mlruns/152876959176938252/13ccbfda3107466bb5b9c002638d405f/artifacts
+end_time: 1779666687626
+entry_point_name: ''
+experiment_id: '152876959176938252'
+lifecycle_stage: active
+run_id: 13ccbfda3107466bb5b9c002638d405f
+run_name: burly-donkey-176
+run_uuid: 13ccbfda3107466bb5b9c002638d405f
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1779666680316
+status: 3
+tags: []
+user_id: runner
