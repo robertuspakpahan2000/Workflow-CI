@@ -1,4 +1,4 @@
-﻿name: MLflow CI - Heart Disease
+name: MLflow CI - Heart Disease MLProject
 
 on:
   push:
@@ -8,9 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  train-and-deploy:
+  train:
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
 
@@ -18,7 +17,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: Set up Python 3.12
@@ -26,80 +24,81 @@ jobs:
         with:
           python-version: "3.12.7"
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install mlflow==2.19.0 pandas==2.2.2 numpy==1.26.4 scikit-learn==1.5.1 matplotlib==3.9.0 seaborn==0.13.2
-          python -c "import mlflow; print('mlflow:', mlflow.__version__)"
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniconda-version: latest
+          activate-environment: mlflow-env
+          auto-activate-base: false
 
-      - name: Check dataset
+      - name: Install MLflow
+        shell: bash -l {0}
         run: |
-          echo "=== Isi MLProject ==="
+          pip install mlflow==2.19.0
+          mlflow --version
+
+      - name: Check Dataset
+        run: |
+          echo "=== MLProject Structure ==="
           ls -lh MLProject/
-          echo "=== Isi dataset ==="
+          echo "=== Dataset ==="
           ls -lh MLProject/heart_preprocessing/
 
-      - name: Train Model
+      - name: Run MLflow Project (SESUAI KETENTUAN)
+        shell: bash -l {0}
         run: |
           cd MLProject
+          
+          # Set local tracking (bukan DagsHub untuk CI)
           export MLFLOW_TRACKING_URI="mlruns"
-          export MLFLOW_DISABLE_ENV_MANAGER_CONDA_WARNING="TRUE"
-          python modelling.py \
-            --data_path heart_preprocessing/heart_preprocessing.csv \
-            --n_estimators 100 \
-            --max_depth 10 \
-            --min_samples_split 2 \
-            --max_features sqrt \
-            --test_size 0.2 \
-            --random_state 42
-          echo "=== Struktur mlruns ==="
-          find mlruns -type d | head -20
+          
+          # Jalankan sebagai MLflow Project dengan mlflow run
+          # Ini menghasilkan Run ID dan mengelola environment sesuai MLProject spec
+          mlflow run . \
+            --experiment-name "Heart-Disease-CI" \
+            --env-manager local \
+            -P n_estimators=100 \
+            -P max_depth=10 \
+            -P min_samples_split=2 \
+            -P max_features=sqrt \
+            -P test_size=0.2 \
+            -P random_state=42
+          
+          echo ""
+          echo "=== MLflow Project Run Completed Successfully ==="
+          echo "=== Generated MLruns ==="
+          find mlruns -type d -name "model" | head -5
 
-      - name: Find Model Path
+      - name: Find Model Artifacts
         run: |
           cd MLProject
+          
           MODEL_PATH=$(find mlruns -type d -name "model" | head -1)
-          echo "Model path: $MODEL_PATH"
+          echo "Model artifacts location: $MODEL_PATH"
+          
           if [ -z "$MODEL_PATH" ]; then
-            echo "ERROR: model tidak ditemukan!"
-            find mlruns -type f | head -20
+            echo "ERROR: Model artifacts not found!"
             exit 1
           fi
-          echo "$MODEL_PATH" > ../model_path.txt
+          
+          echo "Model found at: $MODEL_PATH"
+          ls -lh "$MODEL_PATH"
 
-      - name: Upload Artifacts to GitHub
+      - name: Upload MLruns to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mlruns-run-${{ github.run_number }}
-          path: |
-            MLProject/mlruns/
-            MLProject/artifacts/
+          path: MLProject/mlruns/
           retention-days: 30
 
-      - name: Save Artifacts to Repository
+      - name: Commit MLruns to Repository
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          git add MLProject/artifacts/ 2>/dev/null || true
+          
           git add MLProject/mlruns/ 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "ci: artifacts run #${{ github.run_number }} [skip ci]"
-          git push origin main
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and Push Docker Image
-        run: |
-          MODEL_PATH=$(cat model_path.txt)
-          echo "Model path: $MODEL_PATH"
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:latest"
-          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/heart-disease-mlflow:run${{ github.run_number }}"
-          mlflow models build-docker --model-uri "$MODEL_PATH" --name "$IMAGE"
-          docker tag "$IMAGE" "$IMAGE_TAG"
-          docker push "$IMAGE"
-          docker push "$IMAGE_TAG"
-          echo "Docker pushed: $IMAGE"
+          git add MLProject/artifacts/ 2>/dev/null || true
+          
+          git diff --staged --quiet || git commit -m "ci: mlruns artifacts from MLflow Project [skip ci]"
+          git push origin main || true
