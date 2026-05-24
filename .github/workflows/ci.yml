@@ -48,25 +48,12 @@ jobs:
         shell: bash -l {0}
         run: |
           cd MLProject
-          
-          # Set local tracking (bukan DagsHub untuk CI)
           export MLFLOW_TRACKING_URI="mlruns"
           
-          # Jalankan sebagai MLflow Project dengan mlflow run
-          # Ini menghasilkan Run ID dan mengelola environment sesuai MLProject spec
-          mlflow run . \
-            --experiment-name "Heart-Disease-CI" \
-            --env-manager local \
-            -P n_estimators=100 \
-            -P max_depth=10 \
-            -P min_samples_split=2 \
-            -P max_features=sqrt \
-            -P test_size=0.2 \
-            -P random_state=42
+          # Semua parameter DALAM 1 BARIS
+          mlflow run . --experiment-name "Heart-Disease-CI" --env-manager local -P n_estimators=100 -P max_depth=10 -P min_samples_split=2 -P max_features=sqrt -P test_size=0.2 -P random_state=42
           
-          echo ""
-          echo "=== MLflow Project Run Completed Successfully ==="
-          echo "=== Generated MLruns ==="
+          echo "MLflow run completed!"
           find mlruns -type d -name "model" | head -5
 
       - name: Find Model Artifacts
