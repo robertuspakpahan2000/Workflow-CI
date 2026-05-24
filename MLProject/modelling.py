@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import mlflow.sklearn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (accuracy_score, precision_score,
                               recall_score, f1_score)
@@ -52,6 +53,14 @@ def main():
     print(f"Precision: {precision_score(y_test, y_pred):.4f}")
     print(f"Recall   : {recall_score(y_test, y_pred):.4f}")
     print(f"F1-Score : {f1_score(y_test, y_pred):.4f}")
+
+# Log model ke MLflow
+mlflow.sklearn.log_model(
+    sk_model=model,
+    artifact_path="model"
+)
+
+print("Model successfully logged to MLflow!")
 
 if __name__ == "__main__":
     main()
