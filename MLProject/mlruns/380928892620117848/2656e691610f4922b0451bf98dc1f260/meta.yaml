@@ -1,0 +1,15 @@
+artifact_uri: /home/runner/work/Workflow-CI/Workflow-CI/MLProject/mlruns/380928892620117848/2656e691610f4922b0451bf98dc1f260/artifacts
+end_time: 1779675450930
+entry_point_name: ''
+experiment_id: '380928892620117848'
+lifecycle_stage: active
+run_id: 2656e691610f4922b0451bf98dc1f260
+run_name: serious-slug-966
+run_uuid: 2656e691610f4922b0451bf98dc1f260
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1779675447479
+status: 3
+tags: []
+user_id: runner
